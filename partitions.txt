@@ -1,0 +1,118 @@
+wuxianlin@wuxianlin-ubuntu:~/android/cm-13.0/device/gree/g0215d$ adb shell ls -l /dev/block/bootdevice/by-name
+lrwxrwxrwx root     root              1970-03-02 03:35 aboot -> /dev/block/sde15
+lrwxrwxrwx root     root              1970-03-02 03:35 abootbak -> /dev/block/sde16
+lrwxrwxrwx root     root              1970-03-02 03:35 apdp -> /dev/block/sde30
+lrwxrwxrwx root     root              1970-03-02 03:35 bluetooth -> /dev/block/sde21
+lrwxrwxrwx root     root              1970-03-02 03:35 boot -> /dev/block/sde17 65536x1024=67108864
+lrwxrwxrwx root     root              1970-03-02 03:35 cache -> /dev/block/sda3 262144x1024=268435456
+lrwxrwxrwx root     root              1970-03-02 03:35 cdt -> /dev/block/sdd2
+lrwxrwxrwx root     root              1970-03-02 03:35 cmnlib -> /dev/block/sde26
+lrwxrwxrwx root     root              1970-03-02 03:35 cmnlib64 -> /dev/block/sde28
+lrwxrwxrwx root     root              1970-03-02 03:35 cmnlib64bak -> /dev/block/sde29
+lrwxrwxrwx root     root              1970-03-02 03:35 cmnlibbak -> /dev/block/sde27
+lrwxrwxrwx root     root              1970-03-02 03:35 ddr -> /dev/block/sdd3
+lrwxrwxrwx root     root              1970-03-02 03:35 devcfg -> /dev/block/sda6
+lrwxrwxrwx root     root              1970-03-02 03:35 devcfgbak -> /dev/block/sda7
+lrwxrwxrwx root     root              1970-03-02 03:35 devinfo -> /dev/block/sde20
+lrwxrwxrwx root     root              1970-03-02 03:35 dip -> /dev/block/sde13
+lrwxrwxrwx root     root              1970-03-02 03:35 dpo -> /dev/block/sde32
+lrwxrwxrwx root     root              1970-03-02 03:35 dsp -> /dev/block/sde12
+lrwxrwxrwx root     root              1970-03-02 03:35 frp -> /dev/block/sda8
+lrwxrwxrwx root     root              1970-03-02 03:35 fsc -> /dev/block/sdf3
+lrwxrwxrwx root     root              1970-03-02 03:35 fsg -> /dev/block/sde7
+lrwxrwxrwx root     root              1970-03-02 03:35 hyp -> /dev/block/sde5
+lrwxrwxrwx root     root              1970-03-02 03:35 hypbak -> /dev/block/sde6
+lrwxrwxrwx root     root              1970-03-02 03:35 keymaster -> /dev/block/sde24
+lrwxrwxrwx root     root              1970-03-02 03:35 keymasterbak -> /dev/block/sde25
+lrwxrwxrwx root     root              1970-03-02 03:35 keystore -> /dev/block/sda5
+lrwxrwxrwx root     root              1970-03-02 03:35 lksecapp -> /dev/block/sde22
+lrwxrwxrwx root     root              1970-03-02 03:35 lksecappbak -> /dev/block/sde23
+lrwxrwxrwx root     root              1970-03-02 03:35 mdtp -> /dev/block/sde14
+lrwxrwxrwx root     root              1970-03-02 03:35 misc -> /dev/block/sda4
+lrwxrwxrwx root     root              1970-03-02 03:35 modem -> /dev/block/sde11
+lrwxrwxrwx root     root              1970-03-02 03:35 modemst1 -> /dev/block/sdf1
+lrwxrwxrwx root     root              1970-03-02 03:35 modemst2 -> /dev/block/sdf2
+lrwxrwxrwx root     root              1970-03-02 03:35 msadp -> /dev/block/sde31
+lrwxrwxrwx root     root              1970-03-02 03:35 persist -> /dev/block/sda2
+lrwxrwxrwx root     root              1970-03-02 03:35 pmic -> /dev/block/sde9
+lrwxrwxrwx root     root              1970-03-02 03:35 pmicbak -> /dev/block/sde10
+lrwxrwxrwx root     root              1970-03-02 03:35 recovery -> /dev/block/sde19 65536x1024=67108864
+lrwxrwxrwx root     root              1970-03-02 03:35 reserve -> /dev/block/sdd1
+lrwxrwxrwx root     root              1970-03-02 03:35 rpm -> /dev/block/sde1
+lrwxrwxrwx root     root              1970-03-02 03:35 rpmbak -> /dev/block/sde2
+lrwxrwxrwx root     root              1970-03-02 03:35 sec -> /dev/block/sde8
+lrwxrwxrwx root     root              1970-03-02 03:35 splash -> /dev/block/sde33
+lrwxrwxrwx root     root              1970-03-02 03:35 ssd -> /dev/block/sda1
+lrwxrwxrwx root     root              1970-03-02 03:35 sti -> /dev/block/sde34
+lrwxrwxrwx root     root              1970-03-02 03:35 system -> /dev/block/sde18 3145728x1024=3221225472
+lrwxrwxrwx root     root              1970-03-02 03:35 tz -> /dev/block/sde3
+lrwxrwxrwx root     root              1970-03-02 03:35 tzbak -> /dev/block/sde4
+lrwxrwxrwx root     root              1970-03-02 03:35 userdata -> /dev/block/sda9 57824972x1024=59212771328
+lrwxrwxrwx root     root              1970-03-02 03:35 weakbat -> /dev/block/sde36
+lrwxrwxrwx root     root              1970-03-02 03:35 weakchg -> /dev/block/sde35
+lrwxrwxrwx root     root              1970-03-02 03:35 xbl -> /dev/block/sdb1
+lrwxrwxrwx root     root              1970-03-02 03:35 xblbak -> /dev/block/sdc1
+wuxianlin@wuxianlin-ubuntu:~/android/cm-13.0/device/gree/g0215d$ adb shell cat /proc/partitions
+major minor  #blocks  name
+
+ 254        0     524288 zram0
+   8        0   58122240 sda
+   8        1          8 sda1
+   8        2      32768 sda2
+   8        3     262144 sda3
+   8        4       1024 sda4
+   8        5        512 sda5
+   8        6        128 sda6
+   8        7        128 sda7
+   8        8        512 sda8
+   8        9   57824972 sda9
+   8       16       4096 sdb
+   8       17       4052 sdb1
+   8       80      32768 sdf
+   8       81       2048 sdf1
+   8       82       2048 sdf2
+   8       83          4 sdf3
+   8       32       4096 sdc
+   8       33       4052 sdc1
+   8       48     131072 sdd
+   8       49         32 sdd1
+   8       50          4 sdd2
+   8       51       1024 sdd3
+   8       64    4194304 sde
+   8       65        512 sde1
+   8       66        512 sde2
+   8       67       2048 sde3
+   8       68       2048 sde4
+   8       69        512 sde5
+   8       70        512 sde6
+   8       71       2048 sde7
+   8       72         16 sde8
+   8       73        512 sde9
+   8       74        512 sde10
+   8       75      97280 sde11
+   8       76      16384 sde12
+   8       77       1024 sde13
+   8       78      32768 sde14
+   8       79       1024 sde15
+ 259        0       1024 sde16
+ 259        1      65536 sde17
+ 259        2    3145728 sde18
+ 259        3      65536 sde19
+ 259        4          4 sde20
+ 259        5       1024 sde21
+ 259        6        128 sde22
+ 259        7        128 sde23
+ 259        8        512 sde24
+ 259        9        512 sde25
+ 259       10        256 sde26
+ 259       11        256 sde27
+ 259       12        256 sde28
+ 259       13        256 sde29
+ 259       14        256 sde30
+ 259       15        256 sde31
+ 259       16          4 sde32
+ 259       17      33424 sde33
+ 259       18       2048 sde34
+ 259       19      12288 sde35
+ 259       20      12288 sde36
+ 253        0   57824956 dm-0

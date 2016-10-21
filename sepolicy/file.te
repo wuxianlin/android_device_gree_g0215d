@@ -1,0 +1,4 @@
+# Type for Goodix fingerprint template file.
+type gx_fp_lib_file, file_type, data_file_type;
+type gx_fpd_lib_file, data_file_type;
+type gx_fpd_data_file, file_type, data_file_type;
