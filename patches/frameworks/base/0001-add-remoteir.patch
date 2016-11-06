@@ -1,0 +1,1684 @@
+From fb21614ea7f930378e8a39fcccf632ebbb4a1062 Mon Sep 17 00:00:00 2001
+From: wuxianlin <wuxianlinwxl@gmail.com>
+Date: Mon, 31 Oct 2016 03:15:21 +0800
+Subject: [PATCH] add remoteir
+
+Change-Id: Ibd333847786a88f99da429acf31ea296bfb495ea
+---
+ Android.mk                                         |   2 +
+ core/java/android/app/SystemServiceRegistry.java   |   8 +
+ core/java/android/content/Context.java             |  11 +
+ core/java/android/hardware/ConsumerIrManager.java  |  23 +-
+ core/java/android/hardware/IRemoteIrService.aidl   |  44 ++
+ core/java/android/hardware/RemoteIrManager.java    | 561 +++++++++++++++++++++
+ .../java/com/android/server/RemoteIrService.java   | 513 +++++++++++++++++++
+ services/core/jni/Android.mk                       |   3 +
+ .../jni/com_android_server_RemoteIrService.cpp     | 344 +++++++++++++
+ services/core/jni/onload.cpp                       |   2 +
+ services/java/com/android/server/SystemServer.java |  10 +
+ 11 files changed, 1518 insertions(+), 3 deletions(-)
+ create mode 100644 core/java/android/hardware/IRemoteIrService.aidl
+ create mode 100644 core/java/android/hardware/RemoteIrManager.java
+ create mode 100644 services/core/java/com/android/server/RemoteIrService.java
+ create mode 100644 services/core/jni/com_android_server_RemoteIrService.cpp
+
+diff --git a/Android.mk b/Android.mk
+index c6f7820..29af014 100644
+--- a/Android.mk
++++ b/Android.mk
+@@ -467,6 +467,8 @@ LOCAL_SRC_FILES += \
+ 	core/java/android/service/quicksettings/IQSService.aidl \
+ 	core/java/android/service/quicksettings/IQSTileService.aidl \
+ 
++LOCAL_SRC_FILES += core/java/android/hardware/IRemoteIrService.aidl
++
+ # The following are native binders that need to go with the native component
+ # at system/update_engine/binder_bindings/. Use relative path to refer to them.
+ LOCAL_SRC_FILES += \
+diff --git a/core/java/android/app/SystemServiceRegistry.java b/core/java/android/app/SystemServiceRegistry.java
+index 55744b9..fdb6325 100644
+--- a/core/java/android/app/SystemServiceRegistry.java
++++ b/core/java/android/app/SystemServiceRegistry.java
+@@ -55,6 +55,7 @@ import android.hardware.location.ContextHubManager;
+ import android.hardware.usb.IUsbManager;
+ import android.hardware.usb.UsbManager;
+ import android.hardware.radio.RadioManager;
++import android.hardware.RemoteIrManager;
+ import android.location.CountryDetector;
+ import android.location.ICountryDetector;
+ import android.location.ILocationManager;
+@@ -775,6 +776,13 @@ final class SystemServiceRegistry {
+                 return new ContextHubManager(ctx.getOuterContext(),
+                   ctx.mMainThread.getHandler().getLooper());
+             }});
++
++        registerService(Context.REMOTE_IR_SERVICE, RemoteIrManager.class,
++                new CachedServiceFetcher<RemoteIrManager>() {
++            @Override
++            public RemoteIrManager createService(ContextImpl ctx) {
++                return new RemoteIrManager(ctx);
++            }});
+     }
+ 
+     /**
+diff --git a/core/java/android/content/Context.java b/core/java/android/content/Context.java
+index 3f18ea9..4299e1a 100644
+--- a/core/java/android/content/Context.java
++++ b/core/java/android/content/Context.java
+@@ -3531,6 +3531,17 @@ public abstract class Context {
+     public static final String TRUST_SERVICE = "trust";
+ 
+     /**
++     *
++     * Use with {@link #getSystemService} to retrieve a
++     * {@link android.hardware.RemoteIrManager} for interacting with remote ir devices.
++     *
++     * @see #getSystemService
++     * @see android.hardware.RemoteIrManager
++     * @hide
++     */
++    public static final String REMOTE_IR_SERVICE = "remoteir";
++
++    /**
+      * Use with {@link #getSystemService} to retrieve a
+      * {@link android.media.tv.TvInputManager} for interacting with TV inputs
+      * on the device.
+diff --git a/core/java/android/hardware/ConsumerIrManager.java b/core/java/android/hardware/ConsumerIrManager.java
+index 9fa1c3f..3a217b6 100644
+--- a/core/java/android/hardware/ConsumerIrManager.java
++++ b/core/java/android/hardware/ConsumerIrManager.java
+@@ -35,15 +35,18 @@ public final class ConsumerIrManager {
+     private static final String TAG = "ConsumerIr";
+ 
+     private final String mPackageName;
+-    private final IConsumerIrService mService;
++    private final IConsumerIrService mCSService;
++    private final IRemoteIrService mService;
+ 
+     /**
+      * @hide to prevent subclassing from outside of the framework
+      */
+     public ConsumerIrManager(Context context) {
+         mPackageName = context.getPackageName();
+-        mService = IConsumerIrService.Stub.asInterface(
++        mCSService = IConsumerIrService.Stub.asInterface(
+                 ServiceManager.getService(Context.CONSUMER_IR_SERVICE));
++        mService = IRemoteIrService.Stub.asInterface(
++                ServiceManager.getService(Context.REMOTE_IR_SERVICE));
+     }
+ 
+     /**
+@@ -82,7 +85,21 @@ public final class ConsumerIrManager {
+         }
+ 
+         try {
+-            mService.transmit(mPackageName, carrierFrequency, pattern);
++                int pktLen = (pattern.length * 2) + 4;
++                byte [] pktData = new byte [pktLen];
++                int idx = 4;
++                // carrier
++                pktData[0] = 0;
++                pktData[1] = (byte)((carrierFrequency >> 16) & 0xff);
++                pktData[2] = (byte)((carrierFrequency >>  8) & 0xff);
++                pktData[3] = (byte)( carrierFrequency 	   & 0xff);
++
++                for( int i = 0; i < pattern.length; i++) {
++                    int val = pattern[i];
++                    pktData[ idx ++ ] = (byte)((val >> 8) & 0xff);
++                    pktData[ idx ++ ] = (byte)( val       & 0xff);
++                }
++                mService.transmit_unit(mPackageName, pktData, pktLen, 250 );
+         } catch (RemoteException e) {
+             throw e.rethrowFromSystemServer();
+         }
+diff --git a/core/java/android/hardware/IRemoteIrService.aidl b/core/java/android/hardware/IRemoteIrService.aidl
+new file mode 100644
+index 0000000..3bea417
+--- /dev/null
++++ b/core/java/android/hardware/IRemoteIrService.aidl
+@@ -0,0 +1,44 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.hardware;
++
++import android.os.ParcelFileDescriptor;
++
++/** {@hide} */
++interface IRemoteIrService
++{
++	boolean hasIrEmitter();
++
++	int  transmit_raw( String packageName, in byte[] data, int size );
++	int  transmit_raw2( String packageName, in byte[] data, int size );
++	int  transmit_unit( String packageName, in byte[] data, int size, int unitsize );
++	int  cancelTransmit( String packageName );
++	int	 receiveData(String packageName, out byte[] data, int size);
++	int	 receiveData2(String packageName, out byte[] data, int size);
++
++	int  recvInit( String packageName );
++	int  recvIsReady( String packageName );
++	int  receive ( String packageName, out byte[] data, int size );
++	int  setMode ( String packageName, int mode, int value );
++	int  getMode ( String packageName );
++	int  setValue( String packageName, int value );
++	int  getValue( String packageName );
++	int  setResetValue ( String packageName, int value );
++	int  change_fw_mode ( String packageName, int mode );
++	
++	int[] getCarrierFrequencies();
++}
+diff --git a/core/java/android/hardware/RemoteIrManager.java b/core/java/android/hardware/RemoteIrManager.java
+new file mode 100644
+index 0000000..369a882
+--- /dev/null
++++ b/core/java/android/hardware/RemoteIrManager.java
+@@ -0,0 +1,561 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.hardware;
++
++import android.content.Context;
++import android.os.RemoteException;
++import android.os.ServiceManager;
++import android.util.Log;
++
++/**
++ *
++ * Class that operates remote infrared on the device.
++ *
++ * <p>
++ * To obtain an instance of the system infrared transmitter, call
++ * {@link android.content.Context#getSystemService(java.lang.String)
++ * Context.getSystemService()} with
++ * {@link android.content.Context#REMOTE_IR_SERVICE} as the argument.
++ * </p>
++ * @hide
++ */
++public final class RemoteIrManager {
++    private static final String TAG = "RemoteIr";
++
++    private final String 			mPackageName;
++    private final IRemoteIrService 	mService;
++
++    /**
++     * @hide to prevent subclassing from outside of the framework
++     * @hide
++     */
++    public RemoteIrManager(Context context) {
++        mPackageName = context.getPackageName();
++        mService = IRemoteIrService.Stub.asInterface(
++                	ServiceManager.getService(Context.REMOTE_IR_SERVICE));
++
++        if (mService == null) {
++            Log.w(TAG, "RemoteIrManager: no remote ir service.");
++        }
++    }
++
++    /**
++     * Check whether the device has an infrared emitter.
++     * @hide
++     * @return true if the device has an infrared emitter, else false.
++     */
++    public boolean hasIrEmitter() {
++        if (mService == null) {
++            Log.w(TAG, "no remote ir service.");
++            return false;
++        }
++
++        try {
++            return mService.hasIrEmitter();
++        } catch (RemoteException e) {
++        }
++        return false;
++    }
++
++
++    /**
++     * Tansmit infrared signal data.
++     * <p>
++     * This method is synchronous; when it returns the pattern has been transmitted.
++     * </p>
++     *
++     * @param data The IR signal data array.
++     * @param size The total number of byte of data array.
++     * @hide
++     */
++    public int transmit(byte[] data, int size ) {
++    	
++    	int ret = -1;
++    	Log.w(TAG, "RemoteIrManager: function transmit called");//xsd
++        //Log.w(TAG, "RemoteIrManager: transmit called.");
++        
++        if (mService == null) {
++            Log.w(TAG, "failed to transmit; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.transmit_unit(mPackageName, data, size, 250 );
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to transmit.", e);
++        }
++        Log.w(TAG, "RemoteIrManager end function transmit 2");//xsd
++        return ret;
++    }
++
++
++    /**
++     * Transmit infrared signal data.
++     * <p>
++     * This method is synchronous; when it returns the pattern has been transmitted.
++     * </p>
++     *
++     * @param data The IR signal data array.
++     * @param size The number of byte of data array.
++     * @hide
++     */
++    public int write_data(byte[] data, int size) {
++    	int ret = -1;
++    	
++        Log.w(TAG, "RemoteIrManager: write_data called.");//xsd
++        
++        if (mService == null) {
++            Log.w(TAG, "failed to write_data; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.transmit_raw(mPackageName, data, size);
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to write_data.", e);
++        }
++        Log.w(TAG, "RemoteIrManager: write_data called end.");//xsd
++        return ret;
++    }
++    
++
++    /**
++     * Transmit infrared signal data.
++     * <p>
++     * This method is synchronous; when it returns the pattern has been transmitted.
++     * (No wakeup process)
++     * </p>
++     *
++     * @param data The IR signal data array.
++     * @param size The number of byte of data array.
++     * @hide
++     */
++    public int write_data2(byte[] data, int size) {
++    	int ret = -1;
++    	
++        Log.w(TAG, "RemoteIrManager: write_data2 called.");
++        
++        if (mService == null) {
++            Log.w(TAG, "failed to write_data; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.transmit_raw2(mPackageName, data, size);
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to write_data.", e);
++        }
++        Log.w(TAG, "RemoteIrManager: write_data2 called end.");//xsd
++        return ret;
++    }
++    
++        
++    /**
++     * {@hide}
++     * @hide
++     */
++    public int write_unit(byte[] data, int size, int unitsize ) {
++    	
++    	int ret = -1;
++    	
++        Log.w(TAG, "RemoteIrManager: transmit_unit called.");
++        
++        if (mService == null) {
++            Log.w(TAG, "failed to write_unit; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.transmit_unit(mPackageName, data, size, unitsize );
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to write_unit.", e);
++        }
++        
++        return ret;
++    }
++
++
++    /**
++     * @hide
++     */
++    public int cancelTransmit() {
++
++        int ret = -1;
++        byte [] cmd = { (byte)0x69, (byte)0x69, (byte)0x96, (byte)0x96 };
++
++        ret = transmit( cmd, 4 );
++
++        if( ret < 0 ) {
++            Log.w(TAG, "failed to cancelTransmit.");
++        }
++
++        return ret;
++    }
++
++
++
++    /**
++     * receive data from ir sensor.
++     * <p>
++     * Read any remained or ready data from ir sensor.
++     * </p>
++     *
++     * @param data The data array to receive from IR chip.
++     * @param size The number of byte of data array.
++     *
++     * @return The size of received data in bytes.
++     * @hide
++     */
++    public int receiveData(byte[] data, int size) {
++    	int ret = -1;
++    	
++        if (mService == null) {
++            Log.w(TAG, "failed to receiveData; no consumer ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.receiveData(mPackageName, data, size);
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to receiveData.", e);
++        }
++
++        Log.w(TAG, "RemoteIrManager: receiveData returned:" +ret );
++        
++        return ret;
++    }
++
++
++
++    /**
++     * (experimental) receive data from ir sensor.
++     * <p>
++     * Read any remained or ready data from ir sensor.
++     * </p>
++     *
++     * @param data The data array to receive from IR chip.
++     * @param size The number of byte of data array.
++     *
++     * @return The size of received data in bytes.
++     * @hide
++     */
++    public int receiveData2(byte[] data, int size) {
++    	int ret = -1;
++    	
++        if (mService == null) {
++            Log.w(TAG, "failed to receiveData; no consumer ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.receiveData2(mPackageName, data, size);
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to receiveData.", e);
++        }
++
++        Log.w(TAG, "RemoteIrManager: receiveData returned:" +ret );
++        
++        return ret;
++    }
++
++
++    /**
++     * Initialize ir signal receive mode.
++     *
++     * <p>
++     * 	Change current IR operation mode to receive mode.
++     * 	You can use receive_is_ready(), receive() function after execute this function.
++     * </p>
++     * @hide
++     */
++	public int receive_init() {
++
++		int ret = -1;
++		byte [] cmd = { (byte)0x11, (byte)0x11, (byte)0xee, (byte)0xee };
++		
++		ret = transmit( cmd, 4 );
++    	
++    	if( ret < 0 ) {
++            Log.w(TAG, "failed to initialize receive.");
++        }
++        else {
++        	
++			/* change mode to input mode */
++			//ioctl(dev->file_fd, REMOTE_CTRL_CTL_SET_GPIO_MODE, 0, 0);        	
++	        try {
++				mService.setMode( mPackageName, 0, 0 );	// 0:INPUT_MODE, 0:VALUE
++	        } catch (RemoteException e) {
++	            Log.w(TAG, "failed to setMode.", e);
++	        }
++        }
++
++        return ret;
++	}
++
++
++    /**
++     * Check the received data exists in internal buffer.
++     *
++     * <p>
++     * If the data ready, user can use receive() function to retrieve received data.
++     * </p>
++     *
++     * @return 1 if data ready. 0 if data not yet ready.
++     * @hide
++     */
++	public int receive_is_ready() {
++		int ret = -1;
++    	
++        if (mService != null) {
++	    
++	        try {
++	            ret = mService.recvIsReady(mPackageName);
++	        } catch (RemoteException e) {
++	            Log.w(TAG, "failed to check receive data is ready.", e);
++	        }
++		}
++        
++        return ret;		
++	}
++	
++
++    /**
++     * receive infrared signal data from ir sensor.
++     * <p>
++     * This method is synchronous; when it returns the buffer has been received.
++     * </p>
++     *
++     * @param data The data array to receive IR signal data.
++     * @param size The number of byte of data array.
++     *
++     * @return The size of received data in bytes.
++     * @hide
++     */
++    public int receive(byte[] data, int size) {
++    	int ret = -1;
++    	
++        if (mService == null) {
++            Log.w(TAG, "failed to receive; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.receive(mPackageName, data, size);
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to receive.", e);
++        }
++
++        Log.w(TAG, "RemoteIrManager: receive returned:" +ret );
++        
++        return ret;
++    }
++
++
++    /**
++     * @hide
++     */
++    public int setGpioMode( int mode, int value ) {
++
++        // mode: 0:INPUT 1:OUTPUT
++        // value: 0:LOW  1:HIGH
++        int ret = -1;
++
++        if (mService == null) {
++            Log.w(TAG, "failed to setGpioMode; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.setMode(mPackageName, mode, value);	
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to setGpioMode.", e);
++        }
++
++        //Log.w(TAG, "RemoteIrManager: setGpioMode returned:" +ret );
++
++        return ret;
++    }
++
++    /**
++     * @hide
++     */
++    public int setGpioValue( int value ) {
++
++        // value: 0:LOW  1:HIGH
++        int ret = -1;
++
++        if (mService == null) {
++            Log.w(TAG, "failed to setGpioMode; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.setValue(mPackageName, value);	
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to setGpioMode.", e);
++        }
++
++        //Log.w(TAG, "RemoteIrManager: setGpioMode returned:" +ret );
++
++        return ret;
++    }
++
++    /**
++     * @hide
++     */
++    public int getGpioValue() {
++
++        // value: 0:LOW  1:HIGH
++        int ret = -1;
++
++        if (mService == null) {
++            Log.w(TAG, "failed to setGpioMode; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.getValue(mPackageName);	
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to getGpioValue.", e);
++        }
++
++        //Log.w(TAG, "RemoteIrManager: setGpioMode returned:" +ret );
++
++        return ret;
++    }
++
++
++    /**
++     * @hide
++     */
++    public int setResetValue( int value ) {
++
++        // value: 0:LOW  1:HIGH
++        int ret = -1;
++
++        if (mService == null) {
++            Log.w(TAG, "failed to setGpioMode; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.setResetValue(mPackageName, value);	
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to setResetValue.", e);
++        }
++
++        //Log.w(TAG, "RemoteIrManager: setGpioMode returned:" +ret );
++
++        return ret;
++    }
++
++    /**
++     * @hide
++     */
++    public int changeFWMode( int mode ) {
++
++        // mode: zero for bootloader, non-zero for normal 
++        int ret = -1;
++
++        if (mService == null) {
++            Log.w(TAG, "failed to receive; no remote ir service.");
++            return ret;
++        }
++
++        try {
++            ret = mService.change_fw_mode(mPackageName, mode);	
++        } catch (RemoteException e) {
++            Log.w(TAG, "failed to changeFWMode.", e);
++        }
++
++        Log.w(TAG, "RemoteIrManager: changeModeUserIr returned:" +ret );
++
++        return ret;
++    }
++
++    /**
++     *
++     * Represents a range of carrier frequencies (inclusive) on which the
++     * infrared transmitter can transmit
++     * @hide
++     */
++    public final class CarrierFrequencyRange {
++        private final int mMinFrequency;
++        private final int mMaxFrequency;
++
++        /**
++         * Create a segment of a carrier frequency range.
++         *
++         * @param min The minimum transmittable frequency in this range segment.
++         * @param max The maximum transmittable frequency in this range segment.
++         * @hide
++         */
++        public CarrierFrequencyRange(int min, int max) {
++            mMinFrequency = min;
++            mMaxFrequency = max;
++        }
++
++        /**
++         * Get the minimum (inclusive) frequency in this range segment.
++         * @hide
++         */
++        public int getMinFrequency() {
++            return mMinFrequency;
++        }
++
++        /**
++         * Get the maximum (inclusive) frequency in this range segment.
++         * @hide
++         */
++        public int getMaxFrequency() {
++            return mMaxFrequency;
++        }
++    };
++
++    /**
++     * Query the infrared transmitter's supported carrier frequencies
++     *
++     * @return an array of
++     * {@link android.hardware.RemoteIrManager.CarrierFrequencyRange}
++     * objects representing the ranges that the transmitter can support, or
++     * null if there was an error communicating with the Consumer IR Service.
++     * @hide
++     */
++    public CarrierFrequencyRange[] getCarrierFrequencies() {
++        if (mService == null) {
++            Log.w(TAG, "no remote ir service.");
++            return null;
++        }
++
++        try {
++            int[] freqs = mService.getCarrierFrequencies();
++            if (freqs.length % 2 != 0) {
++                Log.w(TAG, "remote ir service returned an uneven number of frequencies.");
++                return null;
++            }
++            CarrierFrequencyRange[] range = new CarrierFrequencyRange[freqs.length / 2];
++
++            for (int i = 0; i < freqs.length; i += 2) {
++                range[i / 2] = new CarrierFrequencyRange(freqs[i], freqs[i+1]);
++            }
++            return range;
++        } catch (RemoteException e) {
++        }
++        return null;
++    }
++
++}
+diff --git a/services/core/java/com/android/server/RemoteIrService.java b/services/core/java/com/android/server/RemoteIrService.java
+new file mode 100644
+index 0000000..7048c3a
+--- /dev/null
++++ b/services/core/java/com/android/server/RemoteIrService.java
+@@ -0,0 +1,513 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.server;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.content.pm.PackageManager;
++import android.database.ContentObserver;
++import android.hardware.input.InputManager;
++import android.hardware.IRemoteIrService;
++import android.os.Handler;
++import android.os.PowerManager;
++import android.os.Process;
++import android.os.RemoteException;
++import android.os.IBinder;
++import android.os.Binder;
++import android.os.ServiceManager;
++import android.os.SystemClock;
++import android.os.UserHandle;
++import android.os.WorkSource;
++import android.provider.Settings;
++import android.provider.Settings.SettingNotFoundException;
++import android.util.Slog;
++import android.view.InputDevice;
++
++import java.lang.RuntimeException;
++import java.util.ArrayList;
++import java.util.LinkedList;
++import java.util.ListIterator;
++
++public class RemoteIrService extends IRemoteIrService.Stub {
++	
++    private static final String TAG = "RemoteIrService";
++
++    private static final int MAX_XMIT_TIME = 2000000; /* in microseconds */
++	
++    private static native long halOpen();
++    private static native int halTransmit(long halObject, byte[] data, int size);
++    private static native int halTransmit2(long halObject, byte[] data, int size);
++    private static native int halCancelTransmit(long halObject);
++    private static native int halReceiveData(long halObject, byte[] data, int size);
++    private static native int halReceiveData2(long halObject, byte[] data, int size);
++    private static native int halReceiveInit(long halObject);
++    private static native int halCheckReceiveReady(long halObject);
++    private static native int halReceive(long halObject, byte[] data, int size);
++    private static native int halSetMode(long halObject, int mode, int value);
++    private static native int halGetMode(long halObject);
++    private static native int halSetValue(long halObject, int value);
++    private static native int halGetValue(long halObject);
++    private static native int halSetResetMode(long halObject, int mode);
++    private static native int halChangeFWMode(long halObject, int mode);
++    private static native int[] halGetCarrierFrequencies(long halObject);
++
++    private final Context mContext;
++    private final PowerManager.WakeLock mWakeLock;
++    private final long mNativeHal;
++    private final Object mHalLock = new Object();
++
++
++    RemoteIrService(Context context) {
++    	
++        mContext = context;
++        Slog.e(TAG, "Class RemoteIrService : RemoteIrService called");//xsd
++        PowerManager pm = (PowerManager)context.getSystemService(
++                Context.POWER_SERVICE);
++                
++        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
++        mWakeLock.setReferenceCounted(true);
++
++        mNativeHal = halOpen();
++
++        if (mNativeHal <= 0) {
++            throw new RuntimeException("No RemoteIR HAL loaded! ("+mNativeHal+")");
++        }
++        
++        if (mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CONSUMER_IR)) {
++            if (mNativeHal == 0) {
++                throw new RuntimeException("FEATURE_CONSUMER_IR present, but no IR HAL loaded!");
++            }
++        } else if (mNativeHal != 0) {
++            //throw new RuntimeException("IR HAL present, but FEATURE_CONSUMER_IR is not set!");
++        }
++    	Slog.e(TAG, "Class RemoteIrService : RemoteIrService called ended");//xsd    
++    }
++
++    @Override
++    public boolean hasIrEmitter() {
++        return (mNativeHal > 0);
++    }
++
++    private void throwIfNoIrEmitter() {
++        if (mNativeHal <= 0) {
++            throw new UnsupportedOperationException("IR emitter not available");
++			}
++    }
++
++
++    @Override
++    public int transmit_raw(String packageName, byte[] data, int size) {
++    	
++    	int err = -1;
++    	Slog.e(TAG, "Class RemoteIrService : transmit_raw called");//xsd
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        // Right now there is no mechanism to ensure fair queing of IR requests
++        synchronized (mHalLock) {
++            err = halTransmit(mNativeHal, data, size);
++            if (err < 0) {
++                Slog.e(TAG, "Error transmitting: " + err);
++				        }
++        }
++        Slog.e(TAG, "Class RemoteIrService : transmit_raw called ended");//xsd  
++        return err;
++    }
++
++    @Override
++    public int transmit_raw2(String packageName, byte[] data, int size) {
++    	
++    	int err = -1;
++    	Slog.e(TAG, "Class RemoteIrService : transmit_raw2 called");//xsd
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        // Right now there is no mechanism to ensure fair queing of IR requests
++        synchronized (mHalLock) {
++            err = halTransmit2(mNativeHal, data, size);
++            if (err < 0) {
++                Slog.e(TAG, "Error transmitting: " + err);
++            }
++        }
++         Slog.e(TAG, "Class RemoteIrService : transmit_raw2 called ended");//xsd
++        return err;
++    }
++
++
++	@Override
++    public int transmit_unit(String packageName, byte[] data, int size, int unitsize ) {
++    	
++    	int err = -1;
++    	Slog.e(TAG, "Class RemoteIrService : transmit_unit called");//xsd
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        //Slog.e(TAG, "transmit_unit: " + size + "("+unitsize+") ...");
++
++        throwIfNoIrEmitter();
++
++		if( unitsize < 4 ) {
++			return -2;
++		}
++		
++		byte [] unitBuf = new byte [unitsize + 4];
++		int num_to_write, srcPos, chksum;
++		int i, pktNo;
++		
++        // Right now there is no mechanism to ensure fair queing of IR requests
++        synchronized (mHalLock) {
++        	
++        	srcPos = 0;
++        	pktNo  = 0;
++        	
++        	num_to_write = 0;
++        	
++			while( size > 0 ) 
++			{
++
++	        	num_to_write = (size > unitsize) ? unitsize : size;
++	        	
++				// build unit packet
++				unitBuf[0] = (byte)pktNo;
++				unitBuf[1] = (byte)(num_to_write + 2);			// packet length except packet no and length field.
++				
++				// (src, srcPos, dest, destPos, length)
++				System.arraycopy( data, srcPos, unitBuf, 2, num_to_write );
++				
++				chksum = pktNo;
++				for(i=1; i < (num_to_write+2); i++) {
++					chksum += (int)(unitBuf[i] & 0xff);
++				}
++	        	
++				unitBuf[num_to_write + 2] = (byte)((chksum >> 8) & 0xff);
++				unitBuf[num_to_write + 3] = (byte)(chksum & 0xff);
++	        	
++            	err = halTransmit(mNativeHal, unitBuf, (num_to_write+4) );
++	            if (err < 0) {
++	                Slog.e(TAG, "Error transmitting_unit: " + err + "("+pktNo+")");
++	            }
++            	
++				size   -= num_to_write;
++				srcPos += num_to_write;
++				pktNo ++;
++				
++				//if( size > 0 ) {
++					//sleep(1);
++				//}
++            	
++            }	// while
++            
++            
++			// check data length of last packet
++			if( num_to_write == unitsize ) {
++				
++				//sleep(1);
++		
++				unitBuf[0] = (byte)pktNo;		// packet No.
++				unitBuf[1] = 2;					// Length
++				unitBuf[2] = 0;					// checksum
++				unitBuf[3] = (byte)(pktNo + 2);
++				
++				//rc += i2c_master_send(gDeviceData->client,	&_i2c_buf[written],	num_to_write);
++				err = halTransmit(mNativeHal, unitBuf, 4 );
++			}
++
++        }
++		Slog.e(TAG, "Class RemoteIrService : transmit_unit called ended");//xsd
++        return err;
++    }
++
++
++    @Override
++    public int cancelTransmit(String packageName) {
++
++    	int ret = -1;
++		Slog.e(TAG, "Class RemoteIrService : cancelTransmit called");//xsd			
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            ret = halCancelTransmit(mNativeHal);
++            if (ret < 0) {
++                Slog.e(TAG, "Error cancelTransmit: " + ret);
++            }
++        }
++        Slog.e(TAG, "Class RemoteIrService : cancelTransmit called ended");//xsd
++        return ret;
++    }
++
++    @Override
++    public int receiveData(String packageName, byte[] data, int size) {
++
++    	int ret = -1;
++		Slog.e(TAG, "Class RemoteIrService : receiveData called");//xsd		
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            ret = halReceiveData(mNativeHal, data, size);
++            if (ret < 0) {
++                Slog.e(TAG, "Error receiveData: " + ret);
++            }
++        }
++        Slog.e(TAG, "Class RemoteIrService : receiveData called ended");//xsd
++        return ret;
++    }
++    
++
++    @Override
++    public int receiveData2(String packageName, byte[] data, int size) {
++
++    	int ret = -1;
++		Slog.e(TAG, "Class RemoteIrService : receiveData2 called");//xsd	
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            ret = halReceiveData2(mNativeHal, data, size);
++            if (ret < 0) {
++                Slog.e(TAG, "Error receiveData: " + ret);
++            }
++        }
++        Slog.e(TAG, "Class RemoteIrService : receiveData2 called ended");//xsd
++        return ret;
++    }
++    
++    
++    @Override
++    public int recvInit(String packageName) {
++
++    	int ret = -1;
++		Slog.e(TAG, "Class RemoteIrService : recvInit called");//xsd	
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            ret = halReceiveInit(mNativeHal);
++        }
++        Slog.e(TAG, "Class RemoteIrService : recvInit called ended");//xsd
++        return ret;
++	}
++
++
++    @Override
++    public int recvIsReady(String packageName) {
++
++    	int ret = -1;
++		Slog.e(TAG, "Class RemoteIrService : recvIsReady called");//xsd		
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            ret = halCheckReceiveReady(mNativeHal);
++        }
++        Slog.e(TAG, "Class RemoteIrService : recvIsReady called ended");//xsd
++        return ret;
++	}
++
++    
++    @Override
++    public int receive(String packageName, byte[] data, int size) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : receive called");//xsd	
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++		//Slog.i(TAG, "RemoteIrService.receive: " + data.length + " size:"+size);
++
++        // Right now there is no mechanism to ensure fair queing of IR requests
++        synchronized (mHalLock) {
++        	
++        	//halReceiveInit(mNativeHal);
++        	
++            err = halReceive(mNativeHal, data, size);
++
++            if (err < 0) {
++                Slog.e(TAG, "Error receiving: " + err);
++				            }
++        }
++        Slog.e(TAG, "Class RemoteIrService : receive called ended");//xsd
++        return err;
++    }
++    
++    
++    @Override
++    public int setMode(String packageName, int mode, int value) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : setMode called");//xsd
++
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        // Right now there is no mechanism to ensure fair queing of IR requests
++        synchronized (mHalLock) {
++            err = halSetMode(mNativeHal, mode, value);
++        }
++        Slog.e(TAG, "Class RemoteIrService :  setMode called ended");//xsd
++        return err;
++    }    
++
++    @Override
++    public int getMode(String packageName) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : getMode called");//xsd
++
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        // Right now there is no mechanism to ensure fair queing of IR requests
++        synchronized (mHalLock) {
++            err = halGetMode(mNativeHal);
++        }
++        Slog.e(TAG, "Class RemoteIrService :  getMode called ended");//xsd
++        return err;
++    }    
++    
++    
++    @Override
++    public int setValue(String packageName, int value) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : setValue called");//xsd
++
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            err = halSetValue(mNativeHal, value);
++        }
++        Slog.e(TAG, "Class RemoteIrService :  setValue called ended");//xsd
++        return err;
++    }    
++
++    @Override
++    public int getValue(String packageName) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : getValue called");//xsd
++
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            err = halGetValue(mNativeHal);
++        }
++        Slog.e(TAG, "Class RemoteIrService :  getValue called ended");//xsd
++        return err;
++    }    
++    
++    @Override
++    public int setResetValue( String packageName, int value ) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : setResetValue called");//xsd
++
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            err = halSetResetMode(mNativeHal, value);
++        }
++       Slog.e(TAG, "Class RemoteIrService :  setResetValue called ended");//xsd 
++        return err;
++    }    
++
++        
++    @Override
++    public int change_fw_mode( String packageName, int mode ) {
++    	
++    	int err = -1;
++		Slog.e(TAG, "Class RemoteIrService : change_fw_mode called");//xsd
++
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++
++        throwIfNoIrEmitter();
++
++        synchronized (mHalLock) {
++            err = halChangeFWMode(mNativeHal, mode);	// mode: zero for bootloader, non-zero for normal 
++			
++        }
++        Slog.e(TAG, "Class RemoteIrService :  change_fw_mode called ended");//xsd 
++        return err;
++    }
++
++    @Override
++    public int[] getCarrierFrequencies() {
++ 
++ 		Slog.e(TAG, "Class RemoteIrService : getCarrierFrequencies called");//xsd
++        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.TRANSMIT_IR)
++                != PackageManager.PERMISSION_GRANTED) {
++            throw new SecurityException("Requires TRANSMIT_IR permission");
++        }
++        
++        throwIfNoIrEmitter();
++
++        synchronized(mHalLock) {
++			Slog.e(TAG, "Class RemoteIrService : change_fw_mode called ended");//xsd 
++            return halGetCarrierFrequencies(mNativeHal);
++			
++        }
++    }
++}
+diff --git a/services/core/jni/Android.mk b/services/core/jni/Android.mk
+index 05bfa30..ed6de1c 100644
+--- a/services/core/jni/Android.mk
++++ b/services/core/jni/Android.mk
+@@ -38,6 +38,9 @@ LOCAL_SRC_FILES += \
+     $(LOCAL_REL_DIR)/com_android_server_PersistentDataBlockService.cpp \
+     $(LOCAL_REL_DIR)/onload.cpp
+ 
++LOCAL_SRC_FILES += \
++        $(LOCAL_REL_DIR)/com_android_server_RemoteIrService.cpp
++
+ LOCAL_C_INCLUDES += \
+     $(JNI_H_INCLUDE) \
+     frameworks/base/services \
+diff --git a/services/core/jni/com_android_server_RemoteIrService.cpp b/services/core/jni/com_android_server_RemoteIrService.cpp
+new file mode 100644
+index 0000000..a172db4
+--- /dev/null
++++ b/services/core/jni/com_android_server_RemoteIrService.cpp
+@@ -0,0 +1,344 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "RemoteIrService"
++
++#include "jni.h"
++#include "JNIHelp.h"
++#include "android_runtime/AndroidRuntime.h"
++
++#include <stdlib.h>
++#include <utils/misc.h>
++#include <utils/Log.h>
++#include <hardware/hardware.h>
++#include <hardware/remoteir.h>
++#include <ScopedPrimitiveArray.h>
++
++namespace android {
++
++static jlong halOpen(JNIEnv *env, jobject obj) {
++    hw_module_t const* module;
++    remoteir_device_t *dev;
++    int err;
++    unsigned long dev_pt;
++	ALOGE("RemoteIrService: halOpen called");//xsd
++
++    err = hw_get_module(REMOTEIR_HARDWARE_MODULE_ID, &module);
++    if (err != 0) {
++        ALOGE("Can't open remote IR HW Module, error: %d", err);
++        return -1;
++    }
++
++    err = module->methods->open(module, REMOTEIR_TRANSMITTER,
++            (hw_device_t **) &dev);
++    if (err < 0) {
++        ALOGE("Can't open remote IR transmitter, error: %d", err);
++        return -2;
++    }
++    dev_pt = (unsigned long)dev;
++	ALOGE("RemoteIrService: halOpen called ended:%lu",dev_pt);//xsd
++		
++    return (jlong)dev_pt;
++}
++
++
++static jint halTransmit(JNIEnv *env, jobject obj, jlong halObject, jbyteArray data, jint size) 
++{
++    int ret;
++	ALOGE("RemoteIrService: halTransmit called");//xsd
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++    ScopedByteArrayRO cData(env, data);
++    if (cData.get() == NULL) {
++        return -10; //-EINVAL;
++       ALOGE("HAL:Remote IR Can't use halTransmit");//xsd 
++    }
++    //jsize patternLength = cData.size();
++
++    ret = dev->transmit(dev, (unsigned char *)cData.get(), size);
++	ALOGE("RemoteIrService: halTransmit called ended");//xsd
++    return (jint)(ret);
++}
++
++static jint halTransmit2(JNIEnv *env, jobject obj, jlong halObject, jbyteArray data, jint size) 
++{
++    int ret;
++	ALOGE("RemoteIrService: halTransmit2 called");//xsd
++
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++    ScopedByteArrayRO cData(env, data);
++    if (cData.get() == NULL) {
++		ALOGE("HAL:Remote IR Can't transmit2"); //xsd
++		return -10; //-EINVAL;
++       
++    }
++    //jsize patternLength = cData.size();
++
++    ret = dev->transmit_raw(dev, (unsigned char *)cData.get(), size);
++	ALOGE("RemoteIrService: halTransmit2 called ended");//xsd
++
++    return (jint)(ret);
++}
++
++
++static jint halCancelTransmit(JNIEnv *env, jobject obj, jlong halObject) 
++{
++    int ret;
++	ALOGE("RemoteIrService: halCancelTransmit called");//xsd
++
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++
++    ret = dev->cancel_transmit(dev);
++	ALOGE("RemoteIrService: halCancelTransmit called ended");//xsd
++
++    return (jint)(ret);
++}
++
++
++static jint halReceiveData(JNIEnv *env, jobject obj, jlong halObject, jbyteArray data, jint size) 
++{
++    int ret;
++	unsigned char *buf;
++	ALOGE("RemoteIrService: halReceiveData called");//xsd
++
++	if( size <= 0 ) return 0;
++	
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++
++	
++	buf = (unsigned char *)malloc(size);
++	memset( buf, 0, size );
++
++    ret = dev->receive_data(dev, buf, size);
++
++	env->SetByteArrayRegion(data, 0, size, (const jbyte*)buf);
++
++	free( buf );
++	ALOGE("RemoteIrService: halReceiveData called ended");//xsd
++
++    return (jint)(ret);
++}
++
++
++static jint halReceiveData2(JNIEnv *env, jobject obj, jlong halObject, jbyteArray data, jint size) 
++{
++    int ret;
++	unsigned char *buf;
++	ALOGE("RemoteIrService: halReceiveData2 called");//xsd
++
++	if( size <= 0 ) return 0;
++	
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++
++	
++	buf = (unsigned char *)malloc(size);
++	memset( buf, 0, size );
++
++    ret = dev->receive_data_raw(dev, buf, size);
++
++	env->SetByteArrayRegion(data, 0, size, (const jbyte*)buf);
++
++	free( buf );
++	ALOGE("RemoteIrService: halReceiveData2 called ended");//xsd
++
++    return (jint)(ret);
++}
++
++
++
++
++
++
++static jint halReceiveInit(JNIEnv *env, jobject obj, jlong halObject) 
++{
++	int ret;
++	ALOGE("RemoteIrService: halReceiveInit called");//xsd
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++
++    ret = dev->recv_init(dev);
++	ALOGE("RemoteIrService: halReceiveInit called ended");//xsd
++
++    return (jint)(ret);
++}
++
++
++static jint halCheckReceiveReady(JNIEnv *env, jobject obj, jlong halObject) 
++{
++	ALOGE("RemoteIrService: halCheckReceiveReady called");//xsd
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++	ALOGE("RemoteIrService: halCheckReceiveReady called ended");//xsd
++
++    return (jint)dev->recv_is_ready(dev);
++}
++
++
++static jint halReceive(JNIEnv *env, jobject obj, jlong halObject, jbyteArray data, jint size) 
++{
++    int ret;
++	unsigned char *buf;
++	ALOGE("RemoteIrService: halReceive called");//xsd
++
++	if( size <= 0 ) return 0;
++	
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++
++	
++	buf = (unsigned char *)malloc(size);
++	memset( buf, 0, size );
++
++    ret = dev->recv_sync(dev, buf, size);
++
++	env->SetByteArrayRegion(data, 0, size, (const jbyte*)buf);
++
++	free( buf );
++	ALOGE("RemoteIrService: halReceive called ended");//xsd
++
++    return (jint)(ret);
++}
++
++
++
++static jint halSetMode(JNIEnv *env, jobject obj, jlong halObject, jint mode, jint value) 
++{
++    int ret;
++	ALOGE("RemoteIrService: halSetMode called");//xsd	
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++    ret = dev->setmode(dev, mode, value);
++	ALOGE("RemoteIrService: halSetMode called ended");//xsd
++    return (jint)(ret);
++}
++
++static jint halGetMode(JNIEnv *env, jobject obj, jlong halObject) 
++{
++	ALOGE("RemoteIrService: halGetMode called");//xsd	
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++	ALOGE("RemoteIrService: halGetMode called ended");//xsd
++    return dev->getmode(dev);
++}
++
++
++static jint halSetValue(JNIEnv *env, jobject obj, jlong halObject, jint value) 
++{
++    int ret;
++	ALOGE("RemoteIrService: halSetValue called");//xsd	
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++    ret = dev->setvalue(dev, value);
++	ALOGE("RemoteIrService: halSetValue called ended");//xsd
++    return (jint)(ret);
++}
++
++static jint halGetValue(JNIEnv *env, jobject obj, jlong halObject) 
++{
++	ALOGE("RemoteIrService: halGetValue called");//xsd
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++	ALOGE("RemoteIrService: halGetValue called ended");//xsd
++	return dev->getvalue(dev);
++}
++
++
++static jint halSetResetMode(JNIEnv *env, jobject obj, jlong halObject, jint mode) 
++{
++	ALOGE("RemoteIrService: halGetValue called");//xsd
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++	ALOGE("RemoteIrService: halSetResetMode called ended");//xsd
++	return dev->set_reset_mode(dev, mode);
++}
++
++/* mode: zero for bootloader, non-zero for normal  */
++static jint halChangeFWMode(JNIEnv *env, jobject obj, jlong halObject, jint mode) 
++{
++	ALOGE("RemoteIrService: halChangeFWMode called");//xsd
++    remoteir_device_t *dev = reinterpret_cast<remoteir_device_t*>(halObject);
++    ALOGE("RemoteIrService: halChangeFWMode called ended");//xsd	
++    return dev->change_device_mode(dev, mode);
++}
++
++
++
++static jintArray halGetCarrierFrequencies(JNIEnv *env, jobject obj, jlong halObject) 
++{
++    remoteir_device_t *dev = (remoteir_device_t *) halObject;
++    remoteir_freq_range_t *ranges;
++    int len;
++	ALOGE("RemoteIrService: halGetCarrierFrequencies called");//xsd
++
++	jintArray freqsOut;
++	jint *outElements;
++	
++    len = dev->get_num_carrier_freqs(dev);
++    if (len <= 0)
++        return NULL;
++
++    ranges = new remoteir_freq_range_t[len];
++
++    len = dev->get_carrier_freqs(dev, len, ranges);
++    if (len <= 0) {
++        delete[] ranges;
++        return NULL;
++    }
++
++    int i;
++    
++    freqsOut = env->NewIntArray(len*2);
++    if (freqsOut == NULL) {
++        delete[] ranges;
++        return NULL;
++    }
++
++    outElements = env->GetIntArrayElements(freqsOut,NULL);
++    
++    for (i = 0; i < len; i++) {
++        outElements[i*2]   = ranges[i].min;
++        outElements[i*2+1] = ranges[i].max;
++    }
++	env->ReleaseIntArrayElements(freqsOut,outElements,0);
++
++    delete[] ranges;
++	ALOGE("RemoteIrService: halGetCarrierFrequencies called ended");//xsd	
++    return freqsOut;
++}
++
++static const JNINativeMethod method_table[] = {
++    { "halOpen", "()J", (void *)halOpen },
++    { "halTransmit", "(J[BI)I", (void *)halTransmit },
++    { "halTransmit2", "(J[BI)I", (void *)halTransmit2 },
++    { "halCancelTransmit", 	"(J)I", (void *)halCancelTransmit },
++    { "halReceiveData", 	"(J[BI)I", (void *)halReceiveData },
++    { "halReceiveData2", 	"(J[BI)I", (void *)halReceiveData2 },
++    { "halReceiveInit", "(J)I", (void *)halReceiveInit },
++    { "halCheckReceiveReady", "(J)I", (void *)halCheckReceiveReady },
++    { "halReceive",  	"(J[BI)I", (void *)halReceive },
++    { "halSetMode",  "(JII)I", (void *)halSetMode },
++    { "halGetMode",  "(J)I", (void *)halGetMode },
++    { "halSetValue", "(JI)I", (void *)halSetValue },
++    { "halGetValue", "(J)I", (void *)halGetValue },
++    { "halSetResetMode", "(JI)I", (void *)halSetResetMode },
++    { "halChangeFWMode", "(JI)I", (void *)halChangeFWMode },
++    { "halGetCarrierFrequencies", "(J)[I", (void *)halGetCarrierFrequencies},
++};
++
++int register_android_server_RemoteIrService(JNIEnv *env) 
++{
++    jclass clazz = env->FindClass("com/android/server/RemoteIrService");
++    if (clazz == NULL) {
++        ALOGE("Can't find com/android/server/RemoteIrService");
++        //return -1;
++    }
++	 ALOGE("register android server RemoteIrService successed!");
++    return jniRegisterNativeMethods(env, "com/android/server/RemoteIrService",
++            method_table, NELEM(method_table));
++}
++
++}; // namespace android
+diff --git a/services/core/jni/onload.cpp b/services/core/jni/onload.cpp
+index d3341e5..5da7e9b 100644
+--- a/services/core/jni/onload.cpp
++++ b/services/core/jni/onload.cpp
+@@ -46,6 +46,7 @@ int register_android_server_tv_TvInputHal(JNIEnv* env);
+ int register_android_server_PersistentDataBlockService(JNIEnv* env);
+ int register_android_server_Watchdog(JNIEnv* env);
+ int register_android_server_HardwarePropertiesManagerService(JNIEnv* env);
++int register_android_server_RemoteIrService(JNIEnv *env);
+ };
+ 
+ using namespace android;
+@@ -87,6 +88,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* /* reserved */)
+     register_android_server_PersistentDataBlockService(env);
+     register_android_server_Watchdog(env);
+     register_android_server_HardwarePropertiesManagerService(env);
++    register_android_server_RemoteIrService(env);
+ 
+ 
+     return JNI_VERSION_1_4;
+diff --git a/services/java/com/android/server/SystemServer.java b/services/java/com/android/server/SystemServer.java
+index 25957cb..f60f0eb 100644
+--- a/services/java/com/android/server/SystemServer.java
++++ b/services/java/com/android/server/SystemServer.java
+@@ -571,6 +571,7 @@ public final class SystemServer {
+         InputManagerService inputManager = null;
+         TelephonyRegistry telephonyRegistry = null;
+         ConsumerIrService consumerIr = null;
++        RemoteIrService remoteIr = null;
+         MmsServiceBroker mmsService = null;
+         HardwarePropertiesManagerService hardwarePropertiesService = null;
+         Object wigigP2pService = null;
+@@ -645,6 +646,15 @@ public final class SystemServer {
+             traceBeginAndSlog("StartConsumerIrService");
+             consumerIr = new ConsumerIrService(context);
+             ServiceManager.addService(Context.CONSUMER_IR_SERVICE, consumerIr);
++
++            try {
++                traceBeginAndSlog("StartRemoteIrService");
++                remoteIr = new RemoteIrService(context);
++                ServiceManager.addService(Context.REMOTE_IR_SERVICE, remoteIr);
++            } catch (Throwable e) {
++                reportWtf("starting Remote IR Service", e);
++            }
++
+             Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+ 
+             traceBeginAndSlog("StartAlarmManagerService");
+-- 
+1.9.1
+

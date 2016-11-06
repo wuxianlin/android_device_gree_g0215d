@@ -1,0 +1,5 @@
+This is patch directory
+
+cd WORKING_DIR
+sh device/gree/g0215d/patches/install.sh
+sh device/gree/g0215d/patches/uninstall.sh

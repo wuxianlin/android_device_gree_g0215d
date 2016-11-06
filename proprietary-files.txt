@@ -238,10 +238,6 @@ etc/firmware/Signedrompatch_v30.bin
 # Gree
 bin/readnv
 
-# IR
-#lib/hw/remoteir.default.so
-#lib64/hw/remoteir.default.so
-
 # Sensors
 etc/sensors/hals.conf
 etc/sensors/sensor_def_qcomdev.conf

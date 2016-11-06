@@ -1,0 +1,27 @@
+From 0cc1b6a09164e11dddab1bf94f35e70bf1b8efde Mon Sep 17 00:00:00 2001
+From: wuxianlin <wuxianlinwxl@gmail.com>
+Date: Fri, 23 Sep 2016 19:33:45 +0800
+Subject: [PATCH] cm-14.1-policyvers-29
+
+Change-Id: Id97dde8255bd7416b217cdeab7311c30d37886a9
+---
+ common/netd.te | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/common/netd.te b/common/netd.te
+index 66bdea4..a4f31b5 100644
+--- a/common/netd.te
++++ b/common/netd.te
+@@ -15,9 +15,6 @@ allow netd wfdservice:tcp_socket rw_socket_perms;
+ allow netd ipacm_data_file:dir r_dir_perms;
+ allow netd ipacm_data_file:file r_file_perms;
+ 
+-#allow netd to use privileged sock ioctls
+-allowxperm netd self: { unix_stream_socket } ioctl priv_sock_ioctls;
+-
+ # needed for netd to start FST Manager via system property
+ allow netd netd_prop:property_service set;
+ 
+-- 
+1.9.1
+
