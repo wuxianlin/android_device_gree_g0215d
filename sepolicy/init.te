@@ -1,2 +1,0 @@
-allow init gx_fpd_service:service_manager add;
-allow init power_service:service_manager find;

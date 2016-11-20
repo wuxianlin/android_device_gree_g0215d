@@ -50,6 +50,9 @@ etc/firmware/rampatch_tlv_3.2.tlv
 vendor/lib/libbtnv.so
 vendor/lib64/libbtnv.so
 
+# Charger
+bin/hvdcp_opti
+
 # CNE
 bin/cnd
 etc/cne/SwimConfig.xml
