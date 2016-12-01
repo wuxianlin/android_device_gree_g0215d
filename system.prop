@@ -36,6 +36,10 @@ ro.bluetooth.emb_wp_mode=true
 camera.disable_zsl_mode=1
 persist.camera.HAL3.enabled=0
 
+# HAX - remove ASAP
+media.stagefright.legacyencoder=true
+media.stagefright.less-secure=true
+
 # CNE
 persist.cne.feature=1
 
